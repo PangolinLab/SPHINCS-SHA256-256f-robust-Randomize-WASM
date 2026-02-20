@@ -12,18 +12,16 @@ import (
 // SPHINCS+ WASM 接口
 // ----------------------
 
-// GenerateSphincsKeyPair 返回 [privateKeyPEM, publicKeyBytes]
+// GenerateSphincsKeyPairJS 返回 {privateKey: string, publicKey: Uint8Array}
 func GenerateSphincsKeyPairJS(this js.Value, args []js.Value) interface{} {
 	params := parameters.MakeSphincsPlusSHA256256fRobust(true)
 	sk, pk := sphincs.Spx_keygen(params)
 
-	// serialize private key
 	skBytes, err := sk.SerializeSK()
 	if err != nil {
 		return js.ValueOf(map[string]interface{}{"error": err.Error()})
 	}
 
-	// serialize public key
 	pkBytes, err := pk.SerializePK()
 	if err != nil {
 		return js.ValueOf(map[string]interface{}{"error": err.Error()})
@@ -34,13 +32,16 @@ func GenerateSphincsKeyPairJS(this js.Value, args []js.Value) interface{} {
 		Bytes: skBytes,
 	})
 
+	pkJS := js.Global().Get("Uint8Array").New(len(pkBytes))
+	js.CopyBytesToJS(pkJS, pkBytes)
+
 	return js.ValueOf(map[string]interface{}{
-		"privateKey": privPEM,
-		"publicKey":  pkBytes,
+		"privateKey": string(privPEM), // string, not []byte
+		"publicKey":  pkJS,            // Uint8Array
 	})
 }
 
-// SignMessage(privKeyPEM Uint8Array, message Uint8Array)
+// SignMessageJS (privKeyPEM Uint8Array, message Uint8Array)
 func SignMessageJS(this js.Value, args []js.Value) interface{} {
 	if len(args) != 2 {
 		return js.ValueOf(map[string]interface{}{"error": "expected 2 arguments"})
@@ -80,30 +81,17 @@ func SignMessageJS(this js.Value, args []js.Value) interface{} {
 // ----------------------
 // 主函数，注册 JS 导出
 // ----------------------
+var genFunc js.Func
+var signFunc js.Func
+
 func main() {
 	c := make(chan struct{})
 
-	js.Global().Set("GenerateSphincsKeyPair", js.FuncOf(GenerateSphincsKeyPairJS))
-	js.Global().Set("SignMessage", js.FuncOf(SignMessageJS))
+	genFunc = js.FuncOf(GenerateSphincsKeyPairJS)
+	signFunc = js.FuncOf(SignMessageJS)
 
-	<-c // 阻塞，保持 Go runtime 在 WASM 里运行
+	js.Global().Set("GenerateSphincsKeyPair", genFunc)
+	js.Global().Set("SignMessage", signFunc)
+
+	<-c
 }
-
-/*
-<script src="wasm_exec.js"></script>
-<script>
-const go = new Go();
-WebAssembly.instantiateStreaming(fetch("sphincs.wasm"), go.importObject).then(result => {
-  go.run(result.instance);
-
-  // 调用生成密钥
-  const kp = GenerateSphincsKeyPair();
-  console.log(kp.privateKey, kp.publicKey);
-
-  // 调用签名
-  const msg = new TextEncoder().encode("hello world");
-  const sig = SignMessage(kp.privateKey, msg);
-  console.log(sig);
-});
-</script>
-*/
